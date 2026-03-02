@@ -13,19 +13,24 @@ model:
     input_dim: 3
     task_dim: 3
     null_dim: 0
-    hidden_dims: [32, 64, 128, 128, 64, 32]
+    hidden_dims: [128, 256, 256, 256, 128]
   physics:
     mass: 0.1
     size: 0.1
-    inertia_factor: 0.0833
+    inertia_factor: 1.97
+    angular_scale: 77.12
+    asym_sin1: -2.00
+    asym_cos1: 0.56
+    asym_sin2: -1.07
+    asym_cos2: 0.24
     push_duration: 3.0
-    simulation_steps: 100
+    simulation_steps: 300
   optimizer:
     learning_rate: 0.001
 
 # Training configuration
 training:
-  num_epochs: 100
+  num_epochs: 1000
   eval_frequency: 10
   checkpoint_frequency: 20
   checkpoint_dir: "checkpoints"

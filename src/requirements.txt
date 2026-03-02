@@ -1,0 +1,25 @@
+# Core dependencies
+torch
+numpy>=1.21.0
+PyYAML>=6.0.0
+
+# Progress and display
+tqdm>=4.65.0
+colorama>=0.4.6
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Development tools
+black>=23.3.0  # Code formatting
+pylint>=2.17.0  # Code quality
+pytest>=7.3.1   # Testing
+
+# Optional: Jupyter for development and visualization
+jupyterlab>=4.0.0
+ipywidgets>=8.0.0
+
+# Documentation
+sphinx>=7.0.0
+sphinx-rtd-theme>=1.2.0
