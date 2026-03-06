@@ -3,34 +3,31 @@ data:
   base_path: "../data/genesis/"
   train_x: "data_x_cracker_box.npy"
   train_y: "data_y_cracker_box.npy"
-  batch_size: 32
+  batch_size: 64
   shuffle: true
 
 # Model configuration
 model:
   network:
-    type: "NNPhysicsModel"  # Options: NNModel, PhysicsModel, NNPhysicsModel
+    type: "NNPhysicsModel"
     input_dim: 3
     task_dim: 3
     null_dim: 0
-    hidden_dims: [128, 256, 256, 256, 128]
+    hidden_dims: [64, 64]
   physics:
     mass: 0.1
     size: 0.1
-    inertia_factor: 1.97
-    angular_scale: 77.12
-    asym_sin1: -2.00
-    asym_cos1: 0.56
-    asym_sin2: -1.07
-    asym_cos2: 0.24
+    inertia_factor: 0.0833  # 1/12
     push_duration: 3.0
     simulation_steps: 300
   optimizer:
     learning_rate: 0.001
+    weight_decay: 0.0001
 
 # Training configuration
 training:
-  num_epochs: 1000
+  num_epochs: 3000
+  early_stopping_patience: 500
   eval_frequency: 10
   checkpoint_frequency: 20
   checkpoint_dir: "checkpoints"

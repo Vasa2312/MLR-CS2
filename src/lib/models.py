@@ -1,147 +1,111 @@
 import torch
 import torch.nn as nn
-from typing import Dict, Any, List
-import numpy as np
-from tqdm import tqdm
+from typing import List
 
 from .physics import PushPhysics
 
+FEATURE_DIM = 20  # output dimension of FeatureTransform
 
-class ResBlock(nn.Module):
-    """Residual block with skip connection"""
 
-    def __init__(self, dim):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(dim, dim),
-            nn.BatchNorm1d(dim),
-            nn.ReLU(),
-            nn.Linear(dim, dim),
-            nn.BatchNorm1d(dim),
-        )
-        self.relu = nn.ReLU()
+class FeatureTransform(nn.Module):
+    """Expand raw [theta0, offset, distance] -> 20 engineered features."""
 
     def forward(self, x):
-        return self.relu(x + self.net(x))
+        theta0 = x[:, 0:1]
+        offset = x[:, 1:2]
+        distance = x[:, 2:3]
+        s1, c1 = torch.sin(theta0), torch.cos(theta0)
+        s2, c2 = torch.sin(2 * theta0), torch.cos(2 * theta0)
+        return torch.cat([
+            x,                                          # 3: raw
+            s1, c1, s2, c2,                             # 4: harmonics 1-2
+            torch.sin(3 * theta0), torch.cos(3 * theta0),  # 2: harmonic 3
+            torch.sin(4 * theta0), torch.cos(4 * theta0),  # 2: harmonic 4
+            offset ** 2, distance ** 2,                 # 2: quadratic
+            offset * distance,                          # 1: cross
+            offset * s1, offset * c1,                   # 2: offset-angle
+            distance * s1, distance * c1,               # 2: distance-angle
+            offset * distance * s1,                     # 1: triple interaction
+            offset * distance * c1,                     # 1: triple interaction
+        ], dim=1)  # total: 20
 
 
 class NNModel(nn.Module):
-    """Neural network with BatchNorm and skip connections"""
+    """Simple MLP with feature engineering and normalization."""
 
-    def __init__(self, input_dim: int, output_dim: int, hidden_dims: List[int]):
+    def __init__(self, input_dim: int, output_dim: int, hidden_dims: List[int],
+                 feat_mean=None, feat_std=None, y_mean=None, y_std=None):
         super().__init__()
+        self.feature_transform = FeatureTransform()
+        self.output_dim = output_dim
+
+        # Normalization buffers
+        self.register_buffer('feat_mean',
+            torch.zeros(FEATURE_DIM) if feat_mean is None else torch.FloatTensor(feat_mean))
+        self.register_buffer('feat_std',
+            torch.ones(FEATURE_DIM) if feat_std is None else torch.FloatTensor(feat_std))
+        self.register_buffer('y_mean',
+            torch.zeros(output_dim) if y_mean is None else torch.FloatTensor(y_mean))
+        self.register_buffer('y_std',
+            torch.ones(output_dim) if y_std is None else torch.FloatTensor(y_std))
+
+        # Simple MLP: Linear -> ReLU -> ... -> Linear
         layers = []
-        prev_dim = input_dim
-        for hidden_dim in hidden_dims:
-            if hidden_dim == prev_dim:
-                layers.append(ResBlock(hidden_dim))
-            else:
-                layers.extend([
-                    nn.Linear(prev_dim, hidden_dim),
-                    nn.BatchNorm1d(hidden_dim),
-                    nn.ReLU(),
-                ])
-                prev_dim = hidden_dim
-        layers.append(nn.Linear(prev_dim, output_dim))
+        prev = FEATURE_DIM
+        for h in hidden_dims:
+            layers.extend([nn.Linear(prev, h), nn.ReLU()])
+            prev = h
+        layers.append(nn.Linear(prev, output_dim))
         self.layers = nn.Sequential(*layers)
-        self._dim_weights = None
-
-    def set_dim_weights(self, y_std: np.ndarray):
-        """Set dimension weights for balanced loss (inverse variance weighting)"""
-        weights = 1.0 / (y_std ** 2)
-        weights = weights / weights.mean()
-        self._dim_weights = torch.FloatTensor(weights)
 
     def forward(self, x):
-        return self.layers(x)
-
-    def loss(self, pred, target):
-        if self._dim_weights is not None:
-            w = self._dim_weights.to(pred.device)
-            return torch.mean(((pred - target) ** 2) * w)
-        return nn.functional.mse_loss(pred, target)
+        feat = self.feature_transform(x)
+        feat_norm = (feat - self.feat_mean) / self.feat_std
+        out_norm = self.layers(feat_norm)
+        return out_norm * self.y_std + self.y_mean
 
 
-class NNPhysicsModel(NNModel):
-    """Hybrid model: physics prediction + learned residual correction"""
+class NNPhysicsModel(nn.Module):
+    """Hybrid model: physics predictions as input features to NN."""
 
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        hidden_dims: List[int],
-        physics: PushPhysics,
-    ):
-        super().__init__(input_dim + output_dim, output_dim, hidden_dims)
+    def __init__(self, input_dim: int, output_dim: int, hidden_dims: List[int],
+                 physics: PushPhysics,
+                 feat_mean=None, feat_std=None, y_mean=None, y_std=None):
+        super().__init__()
+        self.feature_transform = FeatureTransform()
         self.physics = physics
+        self.output_dim = output_dim
+
+        # Normalization buffers
+        self.register_buffer('feat_mean',
+            torch.zeros(FEATURE_DIM) if feat_mean is None else torch.FloatTensor(feat_mean))
+        self.register_buffer('feat_std',
+            torch.ones(FEATURE_DIM) if feat_std is None else torch.FloatTensor(feat_std))
+        self.register_buffer('y_mean',
+            torch.zeros(output_dim) if y_mean is None else torch.FloatTensor(y_mean))
+        self.register_buffer('y_std',
+            torch.ones(output_dim) if y_std is None else torch.FloatTensor(y_std))
+
+        # MLP input: 20 features + 3 physics outputs = 23
+        layers = []
+        prev = FEATURE_DIM + output_dim
+        for h in hidden_dims:
+            layers.extend([nn.Linear(prev, h), nn.ReLU()])
+            prev = h
+        layers.append(nn.Linear(prev, output_dim))
+        self.layers = nn.Sequential(*layers)
 
     def forward(self, x):
-        physics_pred = self.physics.compute_motion(x).detach()
-        combined = torch.cat([x, physics_pred], dim=1)
-        correction = self.layers(combined)
-        return physics_pred + correction
-
-
-class PushPlanner:
-    """High-level push planning and training"""
-
-    def __init__(
-        self, model_config: Dict[str, Any], physics_sampling_config: Dict[str, Any]
-    ):
-        self.model_config = model_config
-        self.physics_sampling_config = physics_sampling_config
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        self.forward_model = PushNetFactory.create(model_config)
-        self.forward_model = self.forward_model.to(self.device)
-
-        lr = model_config["optimizer"]["learning_rate"]
-        self.forward_optimizer = torch.optim.Adam(
-            self.forward_model.parameters(), lr=lr
-        )
-
-    def train_epoch(self, dataloader):
-        self.forward_model.train()
-        total_loss = 0
-        total_samples = 0
-
-        for x_batch, y_batch in dataloader:
-            x_batch = x_batch.to(self.device)
-            y_batch = y_batch.to(self.device)
-
-            self.forward_optimizer.zero_grad()
-            pred = self.forward_model(x_batch)
-            loss = self.forward_model.loss(pred, y_batch)
-            loss.backward()
-            self.forward_optimizer.step()
-
-            total_loss += loss.item() * x_batch.size(0)
-            total_samples += x_batch.size(0)
-
-        return total_loss / total_samples
-
-
-class PushNetFactory:
-    """Factory for creating different types of push networks"""
-
-    @staticmethod
-    def create(config: Dict[str, Any]) -> nn.Module:
-        network_config = config["network"]
-        physics_config = config["physics"]
-        model_type = network_config["type"]
-        hidden_dims = network_config["hidden_dims"]
-
-        if model_type == "NNModel":
-            return NNModel(
-                network_config["input_dim"], network_config["task_dim"], hidden_dims
-            )
-        elif model_type == "PhysicsModel":
-            return PushPhysics.from_config(physics_config)
+        # Support augmented input: [input(3), cached_physics(3)]
+        if x.shape[1] > 3:
+            physics_pred = x[:, 3:6]
+            x = x[:, :3]
         else:
-            physics = PushPhysics.from_config(physics_config)
-            return NNPhysicsModel(
-                network_config["input_dim"],
-                network_config["task_dim"],
-                hidden_dims,
-                physics,
-            )
+            physics_pred = self.physics.compute_motion(x).detach()
+
+        feat = self.feature_transform(x)
+        feat_norm = (feat - self.feat_mean) / self.feat_std
+        phys_norm = (physics_pred - self.y_mean) / self.y_std
+        combined = torch.cat([feat_norm, phys_norm], dim=1)
+        correction_norm = self.layers(combined)
+        return physics_pred + correction_norm * self.y_std
