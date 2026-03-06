@@ -34,7 +34,6 @@ def parse_args():
 
 
 def compute_norm_stats(x_train, y_train):
-    """Compute feature and output normalization statistics from training data."""
     feat_transform = FeatureTransform()
     with torch.no_grad():
         x_feat = feat_transform(torch.FloatTensor(x_train)).numpy()
@@ -47,7 +46,6 @@ def compute_norm_stats(x_train, y_train):
 
 
 def make_warmup_cosine_scheduler(optimizer, num_epochs, warmup_epochs=50):
-    """Linear warmup then cosine decay."""
     def lr_lambda(epoch):
         if epoch < warmup_epochs:
             return (epoch + 1) / warmup_epochs
@@ -62,12 +60,10 @@ def main():
     device = config.get_device()
     print_info(f"Using device: {device}")
 
-    # Load data
     print_header("Loading Data")
     x_data, y_data = load_data(config)
     print_info(f"Loaded: x={x_data.shape}, y={y_data.shape}")
 
-    # Train/val split (80/20)
     n = len(x_data)
     split = int(0.8 * n)
     np.random.seed(42)
@@ -89,13 +85,11 @@ def main():
     patience = config.training.get("early_stopping_patience", 250)
     weight_decay = config.model["optimizer"].get("weight_decay", 1e-4)
 
-    # Normalization stats
     print_header("Computing Normalization Statistics")
     norm_stats = compute_norm_stats(x_train, y_train)
     y_std = y_train.std(axis=0)
     print_info(f"Output stds: dx={y_std[0]:.4f}, dy={y_std[1]:.4f}, dtheta={y_std[2]:.4f}")
 
-    # ========== 1. Physics Model ==========
     print_header("Evaluating Physics Model")
     physics = PushPhysics.from_config(config.model["physics"])
     with torch.no_grad():
@@ -103,7 +97,6 @@ def main():
     physics_mse = torch.mean((physics_pred - y_val_t) ** 2).item()
     print_info(f"Physics Model Val MSE: {physics_mse:.6f}")
 
-    # Precompute physics predictions for hybrid training
     print_info("Caching physics predictions...")
     with torch.no_grad():
         phys_train_t = physics.compute_motion(torch.FloatTensor(x_train).to(device))
@@ -116,7 +109,6 @@ def main():
     val_data_aug = (x_val_aug_t, y_val_t)
     hybrid_train_loader = prepare_dataloader(x_train_aug, y_train, config)
 
-    # ========== 2. Neural Network ==========
     print_header("Training Neural Network")
     torch.manual_seed(42)
     np.random.seed(42)
@@ -133,7 +125,6 @@ def main():
         scheduler=scheduler, patience=patience
     )
 
-    # LBFGS fine-tuning
     print_info("LBFGS fine-tuning NN...")
     finetune_lbfgs(nn_model, x_train, y_train, device, val_data, max_iter=1000, lr=0.1)
 
@@ -142,7 +133,6 @@ def main():
         nn_mse = torch.mean((nn_pred - y_val_t) ** 2).item()
     print_success(f"NN Val MSE: {nn_mse:.6f}")
 
-    # ========== 3. Hybrid (NN + Physics) ==========
     print_header("Training Hybrid Model")
     torch.manual_seed(42)
     np.random.seed(42)
@@ -159,7 +149,6 @@ def main():
         scheduler=scheduler, patience=patience
     )
 
-    # LBFGS fine-tuning
     print_info("LBFGS fine-tuning Hybrid...")
     finetune_lbfgs(hybrid_model, x_train_aug, y_train, device, val_data_aug, max_iter=1000, lr=0.1)
 
@@ -168,7 +157,6 @@ def main():
         hybrid_mse = torch.mean((hybrid_pred - y_val_t) ** 2).item()
     print_success(f"Hybrid Val MSE: {hybrid_mse:.6f}")
 
-    # ========== Results Summary ==========
     print_header("Results Summary")
     print_info(f"Physics Model Val MSE:  {physics_mse:.6f}")
     print_info(f"NN Model Val MSE:       {nn_mse:.6f}")
@@ -176,20 +164,17 @@ def main():
     best_mse = min(nn_mse, hybrid_mse)
     print_success(f"\nBest Val MSE: {best_mse:.6f}")
 
-    # ========== Plots ==========
     os.makedirs("results", exist_ok=True)
 
     nn_pred_np = nn_pred.cpu().numpy()
     hybrid_pred_np = hybrid_pred.cpu().numpy()
     physics_pred_np = physics_pred.cpu().numpy()
 
-    # Per-dimension MSE
     print_header("Per-Dimension MSE")
     for name, pred in [("Physics", physics_pred_np), ("NN", nn_pred_np), ("Hybrid", hybrid_pred_np)]:
         dim_mse = np.mean((pred - y_val) ** 2, axis=0)
         print_info(f"  {name:8s}  dx={dim_mse[0]:.6f}  dy={dim_mse[1]:.6f}  dtheta={dim_mse[2]:.6f}")
 
-    # Training curves
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
     ax1.plot(nn_train_losses, label="NN Train")
     ax1.plot(hybrid_train_losses, label="Hybrid Train")
@@ -207,7 +192,6 @@ def main():
     plt.close()
     print_success("Saved results/training_curves.png")
 
-    # Overfitting check
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     for ax, name, t_losses, v_losses in [
         (axes[0], "NN", nn_train_losses, nn_val_losses),
@@ -227,7 +211,6 @@ def main():
     plt.close()
     print_success("Saved results/overfitting_check.png")
 
-    # Per-dimension MSE
     dim_labels = ["dx (X)", "dy (Y)", "dθ (Theta)"]
     fig, ax = plt.subplots(figsize=(10, 5))
     x_pos = np.arange(3)
@@ -248,7 +231,6 @@ def main():
     plt.close()
     print_success("Saved results/per_dim_mse.png")
 
-    # Predictions scatter
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     for idx, (name, pred_np) in enumerate([
         ("Physics", physics_pred_np), ("NN", nn_pred_np), ("Hybrid", hybrid_pred_np),
@@ -263,16 +245,14 @@ def main():
     plt.close()
     print_success("Saved results/predictions.png")
 
-    # --- Trajectory plots: chain 10 sequential pushes (x, y, theta) ---
     n_pushes = 10
-    arrow_len = 0.015  # arrow length for orientation visualization
+    arrow_len = 0.015
 
     for name, pred_np in [
         ("Physics", physics_pred_np), ("NN", nn_pred_np), ("Hybrid", hybrid_pred_np),
     ]:
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
 
-        # Accumulate positions and orientations
         gt_x = np.cumsum(np.concatenate([[0], y_val[:n_pushes, 0]]))
         gt_y = np.cumsum(np.concatenate([[0], y_val[:n_pushes, 1]]))
         gt_theta = np.cumsum(np.concatenate([[0], y_val[:n_pushes, 2]]))
@@ -281,12 +261,10 @@ def main():
         pr_y = np.cumsum(np.concatenate([[0], pred_np[:n_pushes, 1]]))
         pr_theta = np.cumsum(np.concatenate([[0], pred_np[:n_pushes, 2]]))
 
-        # Left panel: X-Y trajectory with orientation arrows
         ax1.plot(gt_x, gt_y, 'g-o', label="Ground Truth", markersize=8, linewidth=2)
         ax1.plot(pr_x, pr_y, 'r--s', label="Predicted", markersize=8, linewidth=2)
         ax1.plot(0, 0, 'k*', markersize=15, label="Start")
 
-        # Draw orientation arrows at each position
         for i in range(n_pushes + 1):
             ax1.arrow(gt_x[i], gt_y[i],
                       arrow_len * np.cos(gt_theta[i]), arrow_len * np.sin(gt_theta[i]),
@@ -301,7 +279,6 @@ def main():
         ax1.set_title(f"{name}: X-Y Trajectory ({n_pushes} pushes)")
         ax1.legend(); ax1.grid(True); ax1.axis("equal")
 
-        # Right panel: Theta accumulation over pushes
         pushes = np.arange(n_pushes + 1)
         ax2.plot(pushes, np.degrees(gt_theta), 'g-o', label="Ground Truth θ", markersize=8, linewidth=2)
         ax2.plot(pushes, np.degrees(pr_theta), 'r--s', label="Predicted θ", markersize=8, linewidth=2)

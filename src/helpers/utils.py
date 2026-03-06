@@ -6,7 +6,6 @@ from torch.utils.data import TensorDataset, DataLoader
 
 
 def load_data(config) -> Tuple[np.ndarray, np.ndarray]:
-    """Load training data from files based on configuration"""
     base_path = config.data["base_path"]
     x_path = os.path.join(base_path, config.data["train_x"])
     y_path = os.path.join(base_path, config.data["train_y"])
@@ -19,7 +18,6 @@ def load_data(config) -> Tuple[np.ndarray, np.ndarray]:
 def prepare_dataloader(
     x_data: np.ndarray, y_data: np.ndarray, config
 ) -> torch.utils.data.DataLoader:
-    """Prepare DataLoader from numpy arrays using configuration"""
     x_tensor = torch.FloatTensor(x_data)
     y_tensor = torch.FloatTensor(y_data)
     dataset = TensorDataset(x_tensor, y_tensor)
@@ -31,7 +29,6 @@ def prepare_dataloader(
 def evaluate_planner(
     planner, dataloader: torch.utils.data.DataLoader, device: torch.device
 ) -> Tuple[float, float]:
-    """Evaluate both forward and backward models"""
     planner.forward_model.eval()
     total_forward_loss = 0
     total_samples = 0
@@ -40,7 +37,6 @@ def evaluate_planner(
         for x_batch, y_batch in dataloader:
             x_batch, y_batch = x_batch.to(device), y_batch.to(device)
 
-            # Forward model evaluation
             y_pred = planner.forward_model(x_batch)
             forward_loss = planner.forward_model.loss(y_pred, y_batch)
 
@@ -56,7 +52,6 @@ def evaluate_planner(
 def save_checkpoint(
     planner, epoch: int, forward_loss: float, backward_loss: float, config
 ) -> None:
-    """Save model checkpoint"""
     os.makedirs(config.training["checkpoint_dir"], exist_ok=True)
     checkpoint_path = os.path.join(
         config.training["checkpoint_dir"], f"model_epoch_{epoch}.pth"
@@ -74,7 +69,6 @@ def save_checkpoint(
 
 
 def load_checkpoint(planner, checkpoint_path: str) -> Tuple[int, float, float]:
-    """Load model checkpoint"""
     checkpoint = torch.load(checkpoint_path)
     planner.forward_model.load_state_dict(checkpoint["forward_model_state_dict"])
     planner.forward_optimizer.load_state_dict(

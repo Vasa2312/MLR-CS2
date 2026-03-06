@@ -6,7 +6,6 @@ from tqdm import tqdm
 
 def train_model(model, optimizer, train_loader, num_epochs, device, val_data=None,
                 scheduler=None, patience=None):
-    """Train a model with standard MSE loss, early stopping, and best-model tracking."""
     train_losses = []
     val_losses = []
 
@@ -72,7 +71,6 @@ def train_model(model, optimizer, train_loader, num_epochs, device, val_data=Non
 
 def finetune_lbfgs(model, x_train, y_train, device, val_data=None,
                    max_iter=200, lr=1.0):
-    """Fine-tune with full-batch LBFGS using standard MSE loss."""
     x_train_t = torch.FloatTensor(x_train).to(device)
     y_train_t = torch.FloatTensor(y_train).to(device)
 
